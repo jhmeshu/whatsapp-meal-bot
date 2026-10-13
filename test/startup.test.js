@@ -161,6 +161,8 @@ for (const cleanupFails of [false, true]) {
             '../config': { config: {}, validate() {} },
             './logger': logger,
             './auth': { attachAuthHandlers: () => () => calls.push('stop retries') },
+            './events': { attachMessageHandlers: () => ({ stop() {} }) },
+            './reply': { loadTemplates() {} },
             './client': { createClient: () => ({
                 initialize: async () => { throw new Error('navigation failed'); },
                 destroy: async () => {

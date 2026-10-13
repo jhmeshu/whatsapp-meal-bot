@@ -12,6 +12,11 @@ const config = {
     browserName: process.env.BROWSER_NAME || bot.browserName,
     dataPath: process.env.DATA_PATH || bot.dataPath,
     headless: bool(process.env.HEADLESS, bot.headless),
+    enabled: bot.enabled ?? true,
+    allowedGroups: bot.allowedGroups ?? [],
+    ignoreNonText: bot.ignoreNonText ?? true,
+    ignoreEphemeral: bot.ignoreEphemeral ?? true,
+    ignoreEmpty: bot.ignoreEmpty ?? true,
 
     /**
      * WhatsApp Web version to pin. `null` means "whatever is currently live".
@@ -33,8 +38,16 @@ function validate() {
             `browserName "${config.browserName}" is not one of: ${VALID_BROWSERS.join(', ')}`
         );
     }
-    if (!config.deviceName.trim()) {
+    if (typeof config.deviceName !== 'string' || !config.deviceName.trim()) {
         problems.push('deviceName must not be empty');
+    }
+
+    for (const key of ['enabled', 'ignoreNonText', 'ignoreEphemeral', 'ignoreEmpty']) {
+        if (typeof config[key] !== 'boolean') problems.push(`${key} must be true or false`);
+    }
+    if (!Array.isArray(config.allowedGroups) ||
+        config.allowedGroups.some((id) => typeof id !== 'string' || !/^\d+(?:-\d+)?@g\.us$/.test(id))) {
+        problems.push('allowedGroups must be an array of group IDs ending in @g.us');
     }
 
     if (problems.length) {

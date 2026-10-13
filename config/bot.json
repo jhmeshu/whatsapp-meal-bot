@@ -3,5 +3,10 @@
   "browserName": "Chrome",
   "dataPath": ".wwebjs_auth",
   "headless": false,
-  "webVersion": null
+  "webVersion": null,
+  "enabled": true,
+  "allowedGroups": [],
+  "ignoreNonText": true,
+  "ignoreEphemeral": true,
+  "ignoreEmpty": true
 }

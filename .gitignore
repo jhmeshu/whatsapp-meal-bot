@@ -12,6 +12,7 @@ node_modules/
 logs/
 *.log
 data/state.json
+data/state.json.*.tmp
 
 # OS cruft
 .DS_Store

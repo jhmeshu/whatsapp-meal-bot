@@ -13,7 +13,7 @@ message into a WhatsApp group every time someone writes in it.
 >
 > Auto-replying to *every* message in a group is exactly the pattern their abuse
 > detection is tuned to catch. This bot therefore ships with hard rate limits and
-> randomised delays (see [Safety settings](#safety-settings)), but those only
+> randomised delays (see [Safety settings](#5-safety-settings)), but those only
 > reduce the risk. They do not remove it.
 >
 > **Use a spare number and a spare SIM.** Never point this at a number you care
@@ -33,22 +33,23 @@ message into a WhatsApp group every time someone writes in it.
 | Node.js auto-install / version check | ✅ Ready |
 | Chrome detection | ✅ Ready |
 | QR login and session persistence | ✅ Ready |
-| **Replying to group messages** | 🚧 **Not built yet — see [Status](#status)** |
+| Group allowlist and message filters | ✅ Ready |
+| Plain-text replies and editable templates | ✅ Ready |
+| Persisted rate limits and automatic pauses | ✅ Ready |
 
 ### Status
 
-This build completes **steps 1–2** of [`PLAN.md`](./PLAN.md):
+This build completes **steps 1–6** of [`PLAN.md`](./PLAN.md):
 
 - The project installs and launches with one click.
 - It logs into WhatsApp and stays logged in across restarts.
 - It prints a **QR code** for you to scan.
+- It replies to new messages in groups listed in `config/bot.json`.
+- It rotates editable templates and preserves rate-limit state across restarts.
 
-It **does not yet send any replies.** The auto-reply engine (message listeners,
-filters, rate limiting, reply templates) is steps 3–5 and is not written. If you
-run it today it will connect and sit there doing nothing.
-
-That is deliberate — step 2's login flow is the part most likely to break on a new
-machine, and it had to be proven before anything was built on top of it.
+Windows login has been confirmed by the user. The reply engine has automated
+coverage; a live reply still needs testing in your selected Windows group.
+The empty default group allowlist sends nothing until you select a group.
 
 ---
 
@@ -125,6 +126,29 @@ member.
 The bot must be a **member** of the group to read its messages. Being linked is
 not enough.
 
+### Step 5 — Select the groups and reply text
+
+Restart the bot after it has joined the group. The launcher prints lines like:
+
+```
+Group: Meals | 123456789@g.us
+```
+
+Copy the actual ID into `config/bot.json`:
+
+```json
+"allowedGroups": ["123456789@g.us"]
+```
+
+Keep the surrounding JSON valid, including commas between settings. Multiple
+groups can be listed, separated by commas. An empty array means no replies.
+
+Edit the template text in `data/messages.json`. Restart to apply changes to
+`config/bot.json`, then send a new text message from another group member. Expect
+a 2–6 second delay for the first reply, and at least 8 seconds between later
+replies. The bot's own messages, old messages synced at login, and private chats
+do not trigger replies.
+
 ---
 
 ## 3. Everyday use
@@ -135,12 +159,14 @@ not enough.
 | Stop the bot | Click the window, press **Ctrl+C** |
 | Force a fresh login | Double-click `RESET-SESSION.bat` |
 | Update dependencies | Run `START-HERE.bat` (it always runs `npm install`) |
+| Change reply text | Edit `data/messages.json`; no restart needed |
+| Disable replies | Set `enabled` to `false` in `config/bot.json`, then restart |
 
 **The launcher window must stay open.** Closing it kills the bot. There is no
 background service or auto-start in this version.
 
-If you want it to keep running when you close the window, run `npm start` from a
-terminal instead, or use Task Scheduler (see [Run it in the background](#run-it-in-the-background)).
+To keep it running independently of a terminal window, use Task Scheduler
+(see [Run it in the background](#7-run-it-in-the-background)).
 
 ---
 
@@ -158,7 +184,7 @@ Created automatically from `.env.example` on first run. **Never commit this file
 | `DATA_PATH` | `.wwebjs_auth` | Where the session is stored. Must survive restarts. |
 | `HEADLESS` | `false` | `true` hides the Chrome window. Leave `false` while debugging. |
 
-### `config/bot.json` — bot identity
+### `config/bot.json` — identity and reply behavior
 
 | Key | Default | What it does |
 | --- | --- | --- |
@@ -167,6 +193,17 @@ Created automatically from `.env.example` on first run. **Never commit this file
 | `dataPath` | `.wwebjs_auth` | Fallback if `DATA_PATH` is unset. |
 | `headless` | `false` | Fallback if `HEADLESS` is unset. |
 | `webVersion` | `null` | Pin a WhatsApp Web version. See below. |
+| `enabled` | `true` | Enables auto-replies only in the allowed groups. |
+| `allowedGroups` | `[]` | Actual group IDs ending in `@g.us`. Empty means no replies. |
+| `ignoreNonText` | `true` | Ignore photos, audio, stickers, polls, and other non-text messages. |
+| `ignoreEphemeral` | `true` | Ignore disappearing messages. |
+| `ignoreEmpty` | `true` | Ignore messages with no body or caption. |
+
+Restart after editing `config/bot.json`. To reply to media-only messages, set
+both `ignoreNonText` and `ignoreEmpty` to `false`. Media is not downloaded;
+`{body}` is the caption if one exists, otherwise empty. Own messages, system
+notices, statuses, private chats, and groups outside the allowlist are always
+ignored.
 
 **On `webVersion`.** While `null`, the bot tracks whatever WhatsApp Web currently
 serves. If WhatsApp ships a change that breaks the bot one day with no code
@@ -182,20 +219,56 @@ Every successful startup prints the version in use:
 Copy that number into `config/bot.json` to freeze it. To go back to tracking the
 live version, set `"webVersion": null`.
 
+### `data/messages.json` — reply templates
+
+```json
+{
+  "templates": [
+    { "name": "acknowledge", "text": "Thanks, {author}! Received: {body}" },
+    { "name": "confirm", "text": "Received in {group} at {time}: {body}" }
+  ]
+}
+```
+
+Each template needs a unique name and nonempty text. The bot cycles through them
+in order for each group; that position survives restarts. A single template is
+also supported. Save edits to change the next reply without restarting.
+
+| Placeholder | Meaning |
+| --- | --- |
+| `{author}` | Sender's display name, falling back to their identifier. No mention is added. |
+| `{group}` | Group name. |
+| `{body}` | Incoming message text or caption. |
+| `{time}` | Incoming message time in the computer's local time zone. |
+
+The reply is a new plain-text message, with no quoted original. A malformed
+template file logs an error and sends nothing for that trigger. Fix and save it
+to resume.
+
 ---
 
 ## 5. Safety settings
 
-These control **how often the bot replies**. They do not exist yet — they arrive
-with the auto-reply engine in step 4 of `PLAN.md`.
+These limits are implemented in code and cannot be lowered through configuration.
 
-| Setting | Planned default | Purpose |
+| Setting | Limit | Purpose |
 | --- | --- | --- |
 | Cooldown between replies | 8 s | Stops rapid-fire bursts |
 | Random delay before sending | 2–6 s | Jitter is the strongest anti-spam signal |
 | Per-group cap | 20 replies / 10 min | Stops runaway loops |
 | Auto-pause on breach | yes | Halts replies and logs a warning |
 | Duplicate suppression | 5 min | Stops echo loops between members |
+| Queue length | 100 messages | Bounds memory during a flood; excess messages are dropped |
+
+The queue sends one message at a time. At the per-group cap, that group pauses
+until the rolling window frees space; other groups can continue. Messages skipped
+while paused are not replayed. The bot also discards queued messages after a
+disconnect, so reconnecting does not send an old backlog.
+
+Budgets, recent message IDs, hashes of message bodies, and template positions are
+saved to `data/state.json` before sending. Message text is not stored there. An
+uncertain send error consumes one attempt and is not retried, because the message
+may already have reached WhatsApp. Do not delete this file to bypass a pause.
 
 **Do not lower these to make the bot faster.** They are the only thing standing
 between you and a banned number.
@@ -242,9 +315,27 @@ Check the log lines. Each points somewhere different:
 - Antivirus sometimes blocks Puppeteer's automation. Add an exclusion for this folder.
 - Check `HEADLESS=false` in `.env` — you need the window visible to see anything.
 
+### Connected, but no replies arrive
+
+- Check that `enabled` is `true` and `allowedGroups` contains the exact group ID
+  printed at startup. Restart after changing these settings.
+- Test with a new text message from another member, not the bot's linked phone.
+- Repeated bodies, disappearing messages, media, and empty messages are ignored
+  by default. Try different text.
+- Wait for the 8-second cooldown or a group pause to expire. Debug logs explain
+  skipped messages when `LOG_LEVEL=debug` is set in `.env`.
+- Check for a template error and repair `data/messages.json` if necessary.
+
+### The rate-limit state cannot be loaded
+
+The bot stops when `data/state.json` is malformed, rather than resetting its
+budget silently. Stop the bot and restore the file from a valid backup. If none
+exists, wait at least 10 minutes after the last attempted reply before moving the
+damaged file aside and starting again. A session reset does not reset rate limits.
+
 ### It worked yesterday and not today
 
-Almost always a WhatsApp Web release. See [`webVersion`](#configbotjson--bot-identity).
+Almost always a WhatsApp Web release. See [`webVersion`](#configbotjson--identity-and-reply-behavior).
 
 ### npm reports security warnings
 
@@ -295,7 +386,9 @@ showing a session that no longer exists.
 | --- | --- | --- |
 | `START-HERE.bat` | No | The launcher |
 | `RESET-SESSION.bat` | No | Session reset |
-| `src\`, `config\` | No | Bot source |
+| `src\`, `config\` | No | Bot source and behavior settings |
+| `data/messages.json` | No | Your reply templates |
+| `data/state.json` | No | Persisted reply limits; do not delete to bypass a pause |
 | `.env` | No | Your settings. Delete to regenerate |
 | `.env.example` | No | Template |
 | `node_modules\` | Yes | Re-downloaded on next launch |
@@ -311,8 +404,8 @@ showing a session that no longer exists.
 Not in this build. Group-only, per the plan.
 
 **Can different groups get different messages?**
-Planned, not built. There is a group allowlist designed into the plan but not yet
-implemented.
+All allowed groups share the same templates, with a separate rotation position
+for each group. Different template sets per group are outside v1.
 
 **Will it work if I close the launcher window?**
 No. The bot dies with it. See [Run it in the background](#7-run-it-in-the-background).
@@ -321,11 +414,12 @@ No. The bot dies with it. See [Run it in the background](#7-run-it-in-the-backgr
 Technically yes. I would not. Read the warning at the top of this document.
 
 **Does it send photos or files?**
-Not yet. Only plain text is planned for v1.
+Replies are plain text. Photos or files can trigger a text reply if you enable
+non-text triggers in the configuration.
 
 **How do I stop it replying without deleting it?**
-Set `HEADLESS=true` and stop the launcher. There is no in-app pause switch until
-step 4 of the plan.
+Set `enabled` to `false` in `config/bot.json` and restart. Clearing `allowedGroups`
+also disables replies. `HEADLESS` only controls browser visibility.
 
 **Something is broken and I do not know why.**
 Set `LOG_LEVEL=debug` in `.env` and run `START-HERE.bat`. The verbose log shows

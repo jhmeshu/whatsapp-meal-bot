@@ -3,7 +3,8 @@
 A Node.js bot that runs WhatsApp Web inside a real Chrome browser on Windows and
 posts a custom plain-text message into a WhatsApp group every time anyone sends a message.
 
-**Status:** Planning complete. Not yet implemented.
+**Status:** Steps 1–6 implemented. Windows login confirmed by the user; the reply
+engine is covered by automated tests and awaits a live test in an enabled group.
 
 ---
 
@@ -11,7 +12,7 @@ posts a custom plain-text message into a WhatsApp group every time anyone sends 
 
 | Decision | Choice |
 | --- | --- |
-| Trigger scope | **Every message** arriving in any WhatsApp group |
+| Trigger scope | New eligible messages in explicitly allowed WhatsApp groups |
 | Reply style | **Plain message** (not a quote-reply) |
 | Mention the sender back | **No** |
 | Language | Plain JavaScript (CommonJS) |
@@ -67,11 +68,12 @@ whatsapp-meal-bot/
 │   ├── client.js             # Client construction (Chrome path, LocalAuth, options)
 │   ├── chrome.js             # Windows Chrome path auto-detection
 │   ├── auth.js               # qr / code / authenticated / auth_failure / ready / disconnected
-│   ├── events.js             # attaches all client listeners
+│   ├── events.js             # serialized reply queue and message lifecycle listeners
 │   ├── filters.js            # shouldIgnore(msg, chat) -> boolean
 │   ├── reply.js              # builds and sends the plain reply message
 │   ├── ratelimit.js          # cooldown + flood guard + auto-pause
 │   └── logger.js
+├── test/                    # startup and reply-engine regression tests
 └── data/
     ├── messages.json         # the custom replies; hot-editable, no restart needed
     └── state.json            # rate-limit timestamps (gitignored)
@@ -90,7 +92,10 @@ logs/
 
 ### 4.1 Trigger
 
-The bot posts a reply into a group whenever **any** new message arrives in that group.
+The bot posts a reply into an explicitly allowed group for each eligible new
+message, subject to duplicate suppression and the fixed rate limits. The empty
+default allowlist sends nothing. Group IDs are printed at each successful login.
+`enabled: false` disables replies after restart.
 
 Listener selection, verified against `src/Client.js` in the library source:
 
@@ -108,7 +113,9 @@ belt-and-braces, because a self-reply loop is the single worst failure mode here
 
 ### 4.2 Messages that are ignored
 
-All configurable in `config/bot.json`:
+`ignoreNonText`, `ignoreEphemeral`, and `ignoreEmpty` are configurable in
+`config/bot.json`. Own messages, non-groups, unlisted groups, statuses, and system
+notices are always ignored:
 
 | Rule | Reason |
 | --- | --- |
@@ -127,6 +134,10 @@ All configurable in `config/bot.json`:
 - Support for multiple named templates with a deterministic selection policy, so the
   group does not receive an identical line 400 times in a row.
 - Sent as a **plain message** — no quote, no mention of the sender.
+- Templates are named entries in `data/messages.json` and rotate in file order
+  for each group. Saved edits take effect on the next send without restarting.
+- Replayed messages older than the current login are ignored. Disconnects cancel
+  queued replies; reconnects do not send a backlog.
 
 ### 4.4 Safety rails
 
@@ -140,8 +151,13 @@ These are **hard-coded, not configuration**, because they are what keeps the num
 | Auto-pause on cap breach | yes | Halts replies and logs a loud warning |
 | Serialised reply queue | always | Concurrent messages cannot race or double-send |
 | Duplicate body suppression | 5 min window | Stops ping-pong echo loops between members |
+| Maximum queued triggers | 100 | Bounds memory; excess messages are dropped |
 
 Rate-limit state is persisted to `data/state.json` so restarts do not reset the budget.
+The per-group pause ends when the rolling window frees space. State is written
+atomically before sending, and includes hashes of bodies rather than their text.
+Uncertain network failures are never retried automatically: this prevents double
+posting but cannot guarantee delivery. Invalid state blocks startup until repaired.
 
 ---
 
@@ -159,8 +175,8 @@ puppeteer: {
 Chrome path detection order (`src/chrome.js`):
 
 1. `CHROME_PATH` environment variable — manual override
-2. `C:\Program Files\Google Chrome\Application\chrome.exe`
-3. `C:\Program Files (x86)\Google Chrome\Application\chrome.exe`
+2. `C:\Program Files\Google\Chrome\Application\chrome.exe`
+3. `C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`
 4. `%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe`
 
 > The upstream docs list the `(x86)` path as the default. Modern Chrome installs to
@@ -197,16 +213,17 @@ Additional Windows notes:
 | Step | Deliverable | Gate |
 | --- | --- | --- |
 | 1 | `package.json`, deps, `.gitignore`, `.env.example` | ✅ Done |
-| 2 | `src/client.js`, `src/chrome.js`, `src/auth.js` | ✅ Built. **QR login must be verified on Windows** |
-| 3 | `src/events.js`, `src/filters.js` | Correctly ignores every non-target message |
-| 4 | `src/ratelimit.js`, `src/reply.js` | Reply fires exactly once per eligible message |
-| 5 | `config/bot.json`, `data/messages.json` | Behaviour tunable without touching code |
-| 6 | `README.md` with run and troubleshooting steps | ✅ Done |
+| 2 | `src/client.js`, `src/chrome.js`, `src/auth.js` | ✅ Done; user confirmed Windows login works |
+| 3 | `src/events.js`, `src/filters.js` | ✅ Done; group-only allowlist and filters tested |
+| 4 | `src/ratelimit.js`, `src/reply.js` | ✅ Done; serialized sends, persistent limits, deduplication tested |
+| 5 | `config/bot.json`, `data/messages.json` | ✅ Done; editable behavior and template reload tested |
+| 6 | `README.md` with run and troubleshooting steps | ✅ Updated for auto-replies |
 | 7 | Optional `pm2` ecosystem file | Superseded — `USER-MANUAL.md` documents Task Scheduler instead |
 
-**Step 2 is the gate.** If QR login does not work on the target machine, nothing
-downstream matters. As of this revision the code path is verified on macOS but the
-`.bat` launcher has **never been executed** — it needs a first run on real Windows.
+The user confirmed that Windows startup and login work. The remaining live
+acceptance check is to enable a group, send a new message from another member,
+and confirm the plain-text reply. `npm test` covers the local behavior without
+connecting to WhatsApp or sending real messages.
 
 ---
 
@@ -245,9 +262,10 @@ for the "logged out remotely / switching numbers / corrupted session" path.
 - *A Windows installer.* MSI/NSIS wrapping a folder of `.bat` and `.json` adds a
   build toolchain and an uninstaller for no benefit.
 
-**Known gap:** neither script has been executed. There is no Windows machine or
-Wine in the dev environment, so they are reviewed-by-inspection only. Step 2's
-first real run is their test.
+Windows startup/login has been confirmed by the user. The development environment
+is macOS, so local regression checks use mocked WhatsApp clients and real temporary
+state directories. Session reset is tested against the same configuration sources
+as the client and deletes only `session-meal-bot` inside the configured data path.
 
 ---
 

@@ -5,25 +5,24 @@ require('dotenv').config();
 const { config, validate } = require('../config');
 const { createClient } = require('./client');
 const { attachAuthHandlers } = require('./auth');
+const { attachMessageHandlers } = require('./events');
+const { loadTemplates } = require('./reply');
 const logger = require('./logger');
 
 async function main() {
     validate();
+    loadTemplates();
 
     const client = createClient(config);
 
-    // Message handling arrives in step 3/4 of PLAN.md. For now, log enough to
-    // confirm the login path is healthy end to end.
-    const stopReconnecting = attachAuthHandlers(client, {
-        onReady: async () => {
-            logger.info('Login path verified. Ready for step 3 (message listeners).');
-        },
-    });
+    const messages = attachMessageHandlers(client, config);
+    const stopReconnecting = attachAuthHandlers(client);
 
     client.initialize().catch(async (err) => {
         logger.error('Failed to initialise client:', err.message);
         process.exitCode = 1;
         stopReconnecting();
+        messages.stop();
         try {
             await client.destroy();
         } catch (cleanupError) {
@@ -34,6 +33,7 @@ async function main() {
     const shutdown = async (signal) => {
         logger.info(`Received ${signal}, shutting down...`);
         stopReconnecting();
+        messages.stop();
         try {
             await client.destroy();
         } catch (err) {
