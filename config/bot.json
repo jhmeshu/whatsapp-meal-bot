@@ -1,0 +1,7 @@
+{
+  "deviceName": "Meal Bot",
+  "browserName": "Chrome",
+  "dataPath": ".wwebjs_auth",
+  "headless": false,
+  "webVersion": null
+}

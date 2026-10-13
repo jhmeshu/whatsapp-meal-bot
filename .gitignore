@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Secrets - never commit
+.env
+
+# Persisted WhatsApp session + dedicated Chrome profile.
+# Deleting this forces a fresh QR login.
+.wwebjs_auth/
+
+# Runtime state
+logs/
+*.log
+data/state.json
+
+# OS cruft
+.DS_Store
+Thumbs.db
