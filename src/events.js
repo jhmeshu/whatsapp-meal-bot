@@ -5,6 +5,7 @@ const { shouldIgnore } = require('./filters');
 const { buildReply } = require('./reply');
 const { RateLimiter, LIMITS } = require('./ratelimit');
 const { FATAL_STATES } = require('./auth');
+const { listGroups, getGroupChat } = require('./groups');
 const defaultLogger = require('./logger');
 
 function attachMessageHandlers(client, config, options = {}) {
@@ -21,6 +22,7 @@ function attachMessageHandlers(client, config, options = {}) {
     let controller = new AbortController();
     let stopped = false;
     const queuedIds = new Set();
+    const knownGroups = new Set();
 
     function deactivate() {
         active = false;
@@ -34,7 +36,7 @@ function attachMessageHandlers(client, config, options = {}) {
 
     async function handle(msg, epoch, signal) {
         if (!isCurrent(epoch)) return;
-        const chat = await msg.getChat();
+        const chat = await getGroupChat(client, msg);
         if (!isCurrent(epoch) || shouldIgnore(msg, chat, config)) return;
         const groupId = chat.id._serialized;
         const messageId = msg.id._serialized;
@@ -59,6 +61,14 @@ function attachMessageHandlers(client, config, options = {}) {
     }
 
     function onMessage(msg) {
+        // Discovery also works with an empty allowlist or disabled replies.
+        // Message.from already contains the group ID; no chat lookup is needed.
+        if (!stopped && active && !msg.fromMe && !msg.id?.fromMe &&
+            typeof msg.from === 'string' && msg.from.endsWith('@g.us') &&
+            !knownGroups.has(msg.from)) {
+            knownGroups.add(msg.from);
+            logger.info(`Group ID from incoming message: ${msg.from}`);
+        }
         if (stopped || !active || !config.enabled || !config.allowedGroups.length ||
             msg.fromMe || msg.id?.fromMe || msg.isStatus || msg.broadcast ||
             !config.allowedGroups.includes(msg.from) || !msg.id?._serialized ||
@@ -89,16 +99,27 @@ function attachMessageHandlers(client, config, options = {}) {
         controller = new AbortController();
         readySince = Math.floor(now() / 1000);
         active = true;
+        knownGroups.clear();
         if (!config.enabled) logger.info('Auto-replies are disabled in config/bot.json.');
         else if (!config.allowedGroups.length) {
             logger.info('No groups enabled. Add group IDs to allowedGroups in config/bot.json and restart.');
         } else logger.info(`Auto-replies enabled for ${config.allowedGroups.length} group(s).`);
         // Discovery is read-only; no welcome messages are sent on startup.
-        Promise.resolve().then(() => client.getChats()).then((chats) => {
-            for (const chat of chats.filter((item) => item.isGroup)) {
+        const epoch = generation;
+        Promise.resolve().then(() => listGroups(client)).then((chats) => {
+            if (!isCurrent(epoch)) return;
+            for (const chat of chats) {
+                knownGroups.add(chat.id._serialized);
                 logger.info(`Group: ${chat.name} | ${chat.id._serialized}`);
             }
-        }).catch((err) => logger.warn('Could not list groups:', err.message));
+            if (!chats.length) {
+                logger.info('No groups cached yet. Send a message from another member in your target group to print its ID.');
+            }
+        }).catch((err) => {
+            if (!isCurrent(epoch)) return;
+            logger.warn('Could not list groups:', err.message || String(err));
+            logger.info('Send a message from another member in your target group to print its ID.');
+        });
     }
 
     function onState(state) {

@@ -46,6 +46,7 @@ function fixture(t, settings = {}) {
     const delays = [];
     const errors = [];
     const warnings = [];
+    const infos = [];
     client.getChats = async () => [chat];
     client.sendMessage = async (...args) => {
         sends.push({ args, at: now() });
@@ -53,7 +54,7 @@ function fixture(t, settings = {}) {
     };
     const handlers = attachMessageHandlers(client, { ...config, ...settings.config }, {
         logger: {
-            info() {}, debug() {},
+            info: (...args) => infos.push(args), debug() {},
             error: (...args) => errors.push(args), warn: (...args) => warnings.push(args),
         },
         limiter, now, random: () => 0,
@@ -64,7 +65,7 @@ function fixture(t, settings = {}) {
     t.after(() => handlers.stop());
     client.emit('ready');
     return {
-        client, handlers, sends, delays, errors, warnings, limiter, statePath, now,
+        client, handlers, sends, delays, errors, warnings, infos, limiter, statePath, now,
         advance: (ms) => { clock += ms; },
         receive: (msg) => client.emit('message', msg),
     };
@@ -304,4 +305,28 @@ test('duplicate queued IDs cannot post again after a long backlog', async (t) =>
     release();
     await f.handlers.whenIdle();
     assert.equal(f.sends.length, 1);
+});
+
+test('incoming messages reveal group IDs even if listing fails and replies are disabled', async (t) => {
+    const f = fixture(t, { config: { enabled: false, allowedGroups: [] } });
+    f.client.getChats = async () => { throw new Error('r'); };
+    await new Promise(setImmediate);
+    assert.ok(f.warnings.some((entry) => entry[0] === 'Could not list groups:'));
+    assert.ok(f.infos.some((entry) => entry[0].includes('to print its ID')));
+    f.receive(message('discovery'));
+    f.receive(message('discovery-again'));
+    await f.handlers.whenIdle();
+    assert.equal(f.infos.filter((entry) => entry[0] === `Group ID from incoming message: ${groupId}`).length, 1);
+    assert.equal(f.sends.length, 0);
+});
+
+test('metadata lookup failure does not prevent a filtered reply to the cached allowed group', async (t) => {
+    const f = fixture(t);
+    f.client.pupPage = { evaluate: async () => [chat] };
+    f.client.getChats = async () => { throw new Error('r'); };
+    f.receive(message('one', { getChat: async () => { throw new Error('r'); } }));
+    await f.handlers.whenIdle();
+    assert.equal(f.errors.length, 0);
+    assert.equal(f.sends.length, 1);
+    assert.equal(f.sends[0].args[0], groupId);
 });

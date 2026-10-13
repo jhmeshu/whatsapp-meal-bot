@@ -140,6 +140,11 @@ Copy the actual ID into `config/bot.json`:
 "allowedGroups": ["123456789@g.us"]
 ```
 
+If no groups are listed or you see `Could not list groups`, send a new message
+from another member in the target group while the bot is running. It prints
+`Group ID from incoming message: ...` even when replies are disabled or the
+allowlist is empty. This does not send a reply to an unlisted group.
+
 Keep the surrounding JSON valid, including commas between settings. Multiple
 groups can be listed, separated by commas. An empty array means no replies.
 
