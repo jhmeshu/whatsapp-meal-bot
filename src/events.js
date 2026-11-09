@@ -8,6 +8,27 @@ const { FATAL_STATES } = require('./auth');
 const { listGroups, getGroupChat } = require('./groups');
 const defaultLogger = require('./logger');
 
+// One slow WhatsApp lookup must not block the whole serial queue.
+// These bound getChat / getContact (inside buildReply) / sendMessage so a
+// hung network call logs an error and the next message proceeds.
+const LOOKUPS_TIMEOUT_MS = 15000;
+const SEND_TIMEOUT_MS = 30000;
+
+function withTimeout(promise, ms, op) {
+    return new Promise((resolve, reject) => {
+        // Ref'd on purpose: an unref'd timer would let Node exit before it
+        // fires when the hung lookup is the only pending work.
+        const timer = setTimeout(() => {
+            Promise.resolve(promise).catch(() => {});
+            reject(new Error(`${op} timed out after ${ms}ms`));
+        }, ms);
+        Promise.resolve(promise).then(
+            (value) => { clearTimeout(timer); resolve(value); },
+            (err) => { clearTimeout(timer); reject(err); },
+        );
+    });
+}
+
 function attachMessageHandlers(client, config, options = {}) {
     const logger = options.logger || defaultLogger;
     const limiter = options.limiter || new RateLimiter();
@@ -34,9 +55,12 @@ function attachMessageHandlers(client, config, options = {}) {
         return !stopped && active && epoch === generation;
     }
 
+    const lookupTimeout = options.lookupTimeoutMs || LOOKUPS_TIMEOUT_MS;
+    const sendTimeout = options.sendTimeoutMs || SEND_TIMEOUT_MS;
+
     async function handle(msg, epoch, signal) {
         if (!isCurrent(epoch)) return;
-        const chat = await getGroupChat(client, msg);
+        const chat = await withTimeout(getGroupChat(client, msg), lookupTimeout, 'Chat lookup');
         if (!isCurrent(epoch) || shouldIgnore(msg, chat, config)) return;
         const groupId = chat.id._serialized;
         const messageId = msg.id._serialized;
@@ -52,10 +76,12 @@ function attachMessageHandlers(client, config, options = {}) {
         if (!allowed()) return;
         await sleep(limiter.delay(options.random), signal);
         if (!isCurrent(epoch)) return;
-        const reply = await makeReply(msg, chat, limiter.templateIndex(groupId));
+        const reply = await withTimeout(
+            makeReply(msg, chat, limiter.templateIndex(groupId)), lookupTimeout, 'Reply build');
         if (!isCurrent(epoch) || !allowed()) return;
         limiter.reserve(groupId, messageId, body, reply.text);
-        const sent = await client.sendMessage(groupId, reply.text, { sendSeen: false });
+        const sent = await withTimeout(
+            client.sendMessage(groupId, reply.text, { sendSeen: false }), sendTimeout, 'Send');
         if (!sent) throw new Error('WhatsApp did not confirm the send');
         logger.info(`Sent template "${reply.name}" to ${chat.name || groupId}`);
     }
@@ -146,4 +172,4 @@ function attachMessageHandlers(client, config, options = {}) {
     };
 }
 
-module.exports = { attachMessageHandlers };
+module.exports = { attachMessageHandlers, withTimeout, LOOKUPS_TIMEOUT_MS, SEND_TIMEOUT_MS };

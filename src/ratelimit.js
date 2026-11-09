@@ -23,7 +23,9 @@ function bodyKey(body) {
 }
 
 function validTime(time) {
-    return Number.isFinite(time) && time >= 0;
+    // Upper bound (~2033) rejects corrupted far-future timestamps that would
+    // otherwise keep a group paused indefinitely.
+    return Number.isFinite(time) && time >= 0 && time < 2000000000000;
 }
 
 function validateState(state) {
@@ -118,7 +120,19 @@ class RateLimiter {
         const temporary = `${this.filename}.${process.pid}.tmp`;
         try {
             fs.writeFileSync(temporary, JSON.stringify(this.state, null, 2) + '\n');
-            fs.renameSync(temporary, this.filename);
+            try {
+                fs.renameSync(temporary, this.filename);
+            } catch (renameErr) {
+                // Windows rename can refuse to overwrite (EPERM/EEXIST) while
+                // the old file is open. Fall back to copy+unlink so the
+                // budget is still persisted instead of blocking every send.
+                if (renameErr.code !== 'EPERM' && renameErr.code !== 'EEXIST' &&
+                    renameErr.code !== 'EXDEV') {
+                    throw renameErr;
+                }
+                fs.copyFileSync(temporary, this.filename);
+                fs.unlinkSync(temporary);
+            }
         } finally {
             if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
         }

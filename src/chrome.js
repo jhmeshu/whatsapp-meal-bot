@@ -32,9 +32,11 @@ const DARWIN_CANDIDATES = [
 const LINUX_CANDIDATES = [
     '/usr/bin/google-chrome-stable',
     '/usr/bin/google-chrome',
+    '/opt/google/chrome/chrome',
     '/usr/bin/chromium-browser',
     '/usr/bin/chromium',
     '/snap/bin/chromium',
+    '/snap/bin/chromium-browser',
 ];
 
 function windowsUserLocalCandidates() {

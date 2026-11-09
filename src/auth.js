@@ -92,13 +92,16 @@ function attachAuthHandlers(client, hooks = {}) {
         logger.error('Authentication failed. The saved session may have been revoked.');
         logger.error(`Reason: ${msg}`);
         logger.error('Delete the session directory and restart to scan a fresh QR code.');
+        // A stale session will never recover on its own. Stop the retry loop
+        // so we don't spin against a dead session; the user must re-link.
+        stopReconnecting();
     });
 
     client.on('ready', async () => {
         restarts = 0;
-        const info = client.info;
+        const info = client.info || {};
         logger.info('Client is ready.');
-        logger.info(`Connected as ${info.pushname} (${info.wid.user})`);
+        logger.info(`Connected as ${info.pushname || 'unknown'} (${info.wid?.user || 'unknown'})`);
 
         try {
             const version = await client.getWWebVersion();
@@ -111,7 +114,13 @@ function attachAuthHandlers(client, hooks = {}) {
             logger.warn(`Could not read WhatsApp Web version: ${err.message}`);
         }
 
-        if (hooks.onReady) await hooks.onReady(client);
+        if (hooks.onReady) {
+            try {
+                await hooks.onReady(client);
+            } catch (err) {
+                logger.error('onReady hook failed:', err.message);
+            }
+        }
     });
 
     client.on('change_state', (state) => {

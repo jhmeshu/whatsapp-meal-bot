@@ -8,6 +8,15 @@ const { resolveSessionPath } = require('./session');
 
 const sessionPath = resolveSessionPath(config.dataPath);
 
+// Safety guard: a bad DATA_PATH (e.g. "/") must not point the recursive
+// delete at a system directory. Only `session-meal-bot` under the configured
+// data directory is ever removed, and never from a filesystem root.
+const root = require('path').parse(sessionPath).root;
+if (sessionPath === root || sessionPath.endsWith(`session-${require('./session').SESSION_CLIENT_ID}`) === false) {
+    console.error(`Refusing to delete unexpected session path: ${sessionPath}`);
+    process.exit(1);
+}
+
 try {
     if (fs.existsSync(sessionPath)) {
         console.log(`Deleting session: ${sessionPath}`);

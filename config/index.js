@@ -1,6 +1,11 @@
 'use strict';
 
-const bot = require('./bot.json');
+let bot;
+try {
+    bot = require('./bot.json');
+} catch (err) {
+    throw new Error(`Cannot load config/bot.json: ${err.message}. Fix the file and restart.`);
+}
 
 function bool(value, fallback) {
     if (value === undefined || value === '') return fallback;
@@ -40,6 +45,13 @@ function validate() {
     }
     if (typeof config.deviceName !== 'string' || !config.deviceName.trim()) {
         problems.push('deviceName must not be empty');
+    }
+    if (typeof config.dataPath !== 'string' || !config.dataPath.trim()) {
+        problems.push('dataPath must not be empty');
+    }
+    if (config.webVersion !== null &&
+        (typeof config.webVersion !== 'string' || !/^\d+\.\d+\.\d+/.test(config.webVersion))) {
+        problems.push('webVersion must be null or a version string like "2.3000.10..."');
     }
 
     for (const key of ['enabled', 'ignoreNonText', 'ignoreEphemeral', 'ignoreEmpty']) {

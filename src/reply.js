@@ -21,6 +21,12 @@ function loadTemplates(filename = DEFAULT_MESSAGES_PATH) {
     return templates;
 }
 
+const MAX_BODY_CHARS = 1000;
+
+function truncate(str, max) {
+    return str.length > max ? str.slice(0, max) + '…' : str;
+}
+
 async function buildReply(msg, chat, index, filename = DEFAULT_MESSAGES_PATH) {
     // Read every time: a saved edit takes effect on the next send, without restart.
     const templates = loadTemplates(filename);
@@ -37,7 +43,9 @@ async function buildReply(msg, chat, index, filename = DEFAULT_MESSAGES_PATH) {
     const values = {
         author,
         group: chat.name || chat.id._serialized,
-        body: msg.body || '',
+        // Cap the echoed body so long messages / retries can't bloat the
+        // reply into something WhatsApp rejects or looks spammy.
+        body: truncate(msg.body || '', MAX_BODY_CHARS),
         time: new Date(msg.timestamp * 1000).toLocaleTimeString('en-GB', { hour12: false }),
     };
     // Single pass: placeholders in the sender's body are treated as literal text.
@@ -46,4 +54,4 @@ async function buildReply(msg, chat, index, filename = DEFAULT_MESSAGES_PATH) {
     return { text, name: template.name };
 }
 
-module.exports = { buildReply, loadTemplates };
+module.exports = { buildReply, loadTemplates, MAX_BODY_CHARS, truncate };

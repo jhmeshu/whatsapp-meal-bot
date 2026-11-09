@@ -1,6 +1,7 @@
 'use strict';
 
 const { Client, LocalAuth } = require('whatsapp-web.js');
+const os = require('os');
 
 const { resolveChromePath } = require('./chrome');
 const { SESSION_CLIENT_ID } = require('./session');
@@ -22,6 +23,9 @@ function createClient(config) {
         authStrategy: new LocalAuth({
             clientId: SESSION_CLIENT_ID,
             dataPath: config.dataPath,
+            // Recover from remote-logout / session expiry instead of staying
+            // in a broken authenticated-but-dead state until a manual reset.
+            restartOnAuthFail: true,
         }),
 
         // Makes this recognisable under Settings > Linked devices, and lets an
@@ -34,7 +38,18 @@ function createClient(config) {
             headless: config.headless,
             // Respect the real window size instead of Puppeteer's 800x600 default.
             defaultViewport: null,
-            args: ['--start-maximized'],
+            // src/index.js owns SIGINT/SIGTERM and calls client.destroy().
+            // Puppeteer's default SIGINT handler would otherwise race that
+            // cleanup and can leave a zombie Chrome process behind.
+            handleSIGINT: false,
+            args: [
+                '--start-maximized',
+                '--disable-dev-shm-usage',
+                ...(os.platform() === 'linux'
+                    ? // Chrome refuses to launch as root without these.
+                        ['--no-sandbox', '--disable-setuid-sandbox']
+                    : []),
+            ],
         },
 
         // Pinning the web version stops a WhatsApp-side release from silently
